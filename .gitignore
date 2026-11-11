@@ -1,0 +1,4 @@
+seed.private.js
+tests/
+node_modules/
+*.log
