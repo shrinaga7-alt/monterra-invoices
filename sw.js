@@ -1,5 +1,5 @@
 // Keeps the app working without internet. Shows the saved copy at once and quietly fetches updates for next time.
-const CACHE = 'monterra-invoices-v5';
+const CACHE = 'monterra-invoices-v6';
 const FILES = ['./', 'index.html', 'app.js', 'logic.js', 'data.js', 'manifest.json', 'icon-180.png', 'icon-512.png',
   'vendor/html2canvas.min.js', 'vendor/jspdf.umd.min.js', 'vendor/qrcode.min.js', 'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
   'vendor/inter-latin.woff2', 'vendor/inter-latin-ext.woff2'];

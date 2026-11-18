@@ -56,7 +56,7 @@
         return s;
       }
     } catch (e) { /* first run or storage blocked */ }
-    return { data: clone(DEFAULTS), invoices: [], payments: [], migrations: ['agsp-delivery-50', 'payers-v1', 'gst-v1'] };
+    return { data: clone(DEFAULTS), invoices: [], payments: [], migrations: ['agsp-delivery-50', 'payers-v1', 'gst-v1', 'agb-name-v1'] };
   }
   // One-off updates to data already saved on the phone (the starting list is only copied on first run).
   function migrate(s) {
@@ -83,6 +83,15 @@
         taken.delete(i.number); i.number = L.invoiceNumber(s.data.business.prefix, i.date, i.clientCode, taken); taken.add(i.number);
       }
       s.migrations.push('gst-v1');
+    }
+    if (!s.migrations.includes('agb-name-v1')) {
+      const main = s.data.clients.find((c) => c.code === 'AGB');
+      if (main) {
+        if (main.short === 'AGR Uthandi') main.short = 'Arabian Gardens';
+        main.aliases = main.aliases || [];
+        for (const a of ['arabian gardens', 'arabian garden', 'agr']) if (!main.aliases.includes(a)) main.aliases.push(a);
+      }
+      s.migrations.push('agb-name-v1');
     }
     s.payments = s.payments || [];
   }
@@ -537,7 +546,7 @@
         <div class="section-h"><h2>Prices before GST</h2><span class="aside">${plural(c.rates.length, 'item')}</span></div>
         <div class="group">${rates}<button class="cell" data-action="add-rate" style="color:var(--accent);font-weight:600;min-height:52px">${icon('plus')}Add price</button></div>
         <div class="section-h"><h2>Names used in WhatsApp orders</h2></div>
-        <div class="group"><div class="field"><label>Comma separated — e.g. agr uthandi, uthandi</label><textarea data-f="c-aliases">${esc((c.aliases || []).join(', '))}</textarea></div></div>
+        <div class="group"><div class="field"><label>Comma separated — e.g. agr, arabian gardens</label><textarea data-f="c-aliases">${esc((c.aliases || []).join(', '))}</textarea></div></div>
       </div></div>`;
   }
 

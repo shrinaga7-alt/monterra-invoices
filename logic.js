@@ -51,11 +51,20 @@
 
   function matchClient(text, clients) {
     const t = tokens(text);
+    const key = t.join(' ');
+    const namesOf = (c) => [c.short, c.name, c.code, ...(c.aliases || [])];
+    // An exact name wins outright, so plain "AGR" is the main client and not a branch.
+    for (const c of clients) if (namesOf(c).some((n) => tokens(n).join(' ') === key)) return c;
     let best = null;
     for (const c of clients) {
-      const names = [c.short, c.name, c.code, ...(c.aliases || [])];
-      const score = Math.max(...names.map((n) => similarity(t, tokens(n))));
-      if (!best || score > best.score) best = { client: c, score };
+      // Clients sharing a GSTIN are branches: an extra word may be a location, so every word must match.
+      const isBranch = c.gstin && clients.some((x) => x !== c && x.gstin === c.gstin);
+      for (const n of namesOf(c)) {
+        const nt = tokens(n);
+        if (isBranch && similarity(t, nt) * (t.length + nt.length) / 2 < t.length) continue;
+        const score = similarity(t, nt);
+        if (!best || score > best.score) best = { client: c, score };
+      }
     }
     return best && best.score >= ACCEPT ? best.client : null;
   }
