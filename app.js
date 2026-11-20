@@ -52,12 +52,56 @@
       const s = JSON.parse(localStorage.getItem(KEY));
       if (s && s.data && Array.isArray(s.invoices)) {
         for (const i of s.invoices) if (i.status === 'ready') i.status = 'draft';
-        migrate(s);
+        try { migrate(s); } catch (e) { console.error('update step failed, keeping data as it was', e); }
         return s;
       }
     } catch (e) { /* first run or storage blocked */ }
-    return { data: clone(DEFAULTS), invoices: [], payments: [], migrations: ['agsp-delivery-50', 'payers-v1', 'gst-v1', 'agb-name-v1'] };
+    return { data: clone(DEFAULTS), invoices: [], payments: [], migrations: ['agsp-delivery-50', 'payers-v1', 'gst-v1', 'agb-name-v1', 'agb-name-v2'] };
   }
+  // If an invoice points to a client that is no longer in the list (deleted by mistake,
+  // or lost in a reset), rebuild that client from its invoices: billing details and last prices.
+  var repairedNames; // filled while the app loads, so it must be a hoisted var
+  function repairClients(s) {
+    const MAIN_ALIASES = { AGB: ['arabian gardens', 'arabian garden', 'agr', 'agr uthandi', 'uthandi', 'agr ecr'] };
+    repairedNames = repairedNames || [];
+    const have = new Set(s.data.clients.map((c) => c.code));
+    const byCode = {};
+    for (const i of s.invoices) if (i.clientCode && !have.has(i.clientCode)) (byCode[i.clientCode] = byCode[i.clientCode] || []).push(i);
+    for (const [code, invs] of Object.entries(byCode)) {
+      invs.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.sentAt || 0) - (a.sentAt || 0));
+      const snap = (invs.find((i) => i.snap && i.snap.c) || {}).snap;
+      const sc = snap ? snap.c : {};
+      const rates = [];
+      for (const i of invs) for (const it of i.items || []) {
+        if (it.productId && !rates.some((r) => r.p === it.productId)) rates.push(Object.assign({ p: it.productId, price: Number(it.price) || 0 }, /tray of/i.test(it.name || '') ? { label: it.name } : {}));
+      }
+      const withFee = invs.find((i) => i.deliveryStated);
+      const aliases = [...new Set([...(MAIN_ALIASES[code] || []), ...invs.map((i) => L.norm(i.clientText)).filter(Boolean)])];
+      const c = {
+        code, short: code === 'AGB' ? 'AGR Uthandi' : (sc.short || code), file: '',
+        name: sc.name || '', addr: (sc.addr || []).slice(), contact: sc.contact || '', gstin: sc.gstin || '',
+        gst: invs[0].gst || 'add', aliases, rates,
+      };
+      if (withFee && withFee.delivery !== withFee.deliveryStated) c.deliveryPct = Math.round((withFee.delivery / withFee.deliveryStated) * 100);
+      s.data.clients.push(c);
+      repairedNames.push(c.short);
+    }
+  }
+
+  // Adds clients (and their payer names / products) from a backup or client file, keeping everything else.
+  function mergeClients(src) {
+    const d = src && src.data ? src.data : src;
+    if (!d || !Array.isArray(d.clients)) throw new Error('no client list in this file');
+    const added = [];
+    for (const c of d.clients) if (c && c.code && !clientBy(c.code)) { D().clients.push(clone(c)); added.push(c.short || c.code); }
+    for (const p of d.products || []) if (p && p.id && !productBy(p.id)) D().products.push(clone(p));
+    D().payers = D().payers || {};
+    for (const [k, v] of Object.entries(d.payers || {})) if (!(k in D().payers)) D().payers[k] = v;
+    if (d.business && !D().business.gstin) D().business = clone(d.business);
+    save();
+    return added;
+  }
+
   // One-off updates to data already saved on the phone (the starting list is only copied on first run).
   function migrate(s) {
     s.migrations = s.migrations || [];
@@ -87,13 +131,19 @@
     if (!s.migrations.includes('agb-name-v1')) {
       const main = s.data.clients.find((c) => c.code === 'AGB');
       if (main) {
-        if (main.short === 'AGR Uthandi') main.short = 'Arabian Gardens';
+        // keep the name the user knows
         main.aliases = main.aliases || [];
         for (const a of ['arabian gardens', 'arabian garden', 'agr']) if (!main.aliases.includes(a)) main.aliases.push(a);
       }
       s.migrations.push('agb-name-v1');
     }
+    if (!s.migrations.includes('agb-name-v2')) {
+      const main = s.data.clients.find((c) => c.code === 'AGB');
+      if (main && main.short === 'Arabian Gardens') main.short = 'AGR Uthandi';
+      s.migrations.push('agb-name-v2');
+    }
     s.payments = s.payments || [];
+    repairClients(s);
   }
   const statedDelivery = (inv) => (inv.deliveryStated != null ? inv.deliveryStated : inv.delivery) || 0;
   const deliveryPct = (inv) => (inv.deliveryStated ? Math.round((inv.delivery / inv.deliveryStated) * 100) : Math.round(L.deliveryShare(clientBy(inv.clientCode)) * 100));
@@ -345,11 +395,13 @@
       <div class="section-h"><h2>Backup</h2></div>
       <div class="group">
         <button class="cell" data-action="backup">${icon('download')}<div class="main"><div class="t1">Save backup</div><div class="t2">To Files, Drive or WhatsApp yourself</div></div>${icon('right', 'ico chev')}</button>
-        <button class="cell" data-action="restore">${icon('upload')}<div class="main"><div class="t1">Restore from backup</div></div>${icon('right', 'ico chev')}</button>
+        <button class="cell" data-action="restore">${icon('upload')}<div class="main"><div class="t1">Restore from backup</div><div class="t2">Replaces everything on this phone</div></div>${icon('right', 'ico chev')}</button>
+        <button class="cell" data-action="merge">${icon('clients')}<div class="main"><div class="t1">Add clients from file</div><div class="t2">Adds missing clients, keeps your invoices</div></div>${icon('right', 'ico chev')}</button>
         <button class="cell" data-action="csv">${icon('sheet')}<div class="main"><div class="t1">Export sent invoices</div><div class="t2">Spreadsheet for your accounts</div></div>${icon('right', 'ico chev')}</button>
       </div>
       <p class="small muted" style="margin:8px 4px 0">Invoices and prices are saved on this phone only. Save a backup every week or so.</p>
       <input type="file" id="restore-file" accept=".json,application/json" style="display:none">
+      <input type="file" id="merge-file" accept=".json,application/json" style="display:none">
       <div class="section-h"><h2>Printed on invoices</h2></div>
       <div class="group">
         ${field('Company name', 'b-name', b.name)}
@@ -1250,6 +1302,7 @@
       case 'del-rate': { const c = clientBy(ui.client); c.rates.splice(Number(el.dataset.i), 1); save(); render(); break; }
       case 'backup': await shareOrSave(new File([JSON.stringify(state, null, 1)], `monterra-invoices-backup-${L.todayISO()}.json`, { type: 'application/json' })); break;
       case 'restore': document.getElementById('restore-file').click(); break;
+      case 'merge': document.getElementById('merge-file').click(); break;
       case 'csv': {
         const rows = [['Date', 'Invoice', 'Client', 'Taxable', 'CGST', 'SGST', 'Delivery', 'Total', 'Paid']];
         for (const i of state.invoices.filter((x) => x.status === 'sent').sort((x, y) => x.date.localeCompare(y.date))) {
@@ -1315,6 +1368,16 @@
       const f = el.files && el.files[0];
       el.value = '';
       if (f) checkStatement(f);
+      return;
+    }
+    if (el.id === 'merge-file') {
+      const f = el.files && el.files[0];
+      el.value = '';
+      if (f) f.text().then((txt) => {
+        const added = mergeClients(JSON.parse(txt));
+        render();
+        toast(added.length ? `Added ${added.join(', ')}` : 'No missing clients in that file');
+      }).catch((e) => toast('Could not read the file: ' + e.message));
       return;
     }
     if (el.id === 'restore-file') {
@@ -1440,4 +1503,5 @@
   };
 
   render();
+  if (repairedNames && repairedNames.length) { save(); toast(`Brought back ${repairedNames.join(', ')} from your invoices — check its details under Clients`); }
 })();
