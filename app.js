@@ -89,6 +89,27 @@
   }
 
   // Adds clients (and their payer names / products) from a backup or client file, keeping everything else.
+  // A pasted "MONTERRA-CLIENTS:..." line adds clients, or fixes them if they already exist.
+  function addClientsFromCode(b64) {
+    try {
+      const bytes = Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/')), (ch) => ch.charCodeAt(0));
+      const d = JSON.parse(new TextDecoder().decode(bytes));
+      const done = [];
+      for (const c of d.clients || []) {
+        const have = clientBy(c.code);
+        if (!have) { D().clients.push(clone(c)); done.push(c.short); continue; }
+        for (const k of ['short', 'name', 'addr', 'contact', 'gstin', 'gst', 'file', 'deliveryPct']) if (c[k] !== undefined) have[k] = clone(c[k]);
+        have.aliases = [...new Set([...(have.aliases || []), ...(c.aliases || [])])];
+        for (const r of c.rates || []) if (!have.rates.some((x) => x.p === r.p)) have.rates.push(clone(r));
+        done.push(c.short);
+      }
+      D().payers = D().payers || {};
+      for (const [k, v] of Object.entries(d.payers || {})) if (!(k in D().payers)) D().payers[k] = v;
+      save(); ui.tab = 'clients'; ui.seg = 'clients'; ui.typing = false; ui.pasteText = ''; render();
+      toast(done.length ? `${done.join(', ')} added to your clients` : 'Nothing to add');
+    } catch (e) { toast('That client code looks incomplete — copy the whole line again'); }
+  }
+
   function mergeClients(src) {
     const d = src && src.data ? src.data : src;
     if (!d || !Array.isArray(d.clients)) throw new Error('no client list in this file');
@@ -1133,6 +1154,8 @@
   // ---------- reading orders ----------
   function readText(text) {
     if (!text || !text.trim()) { toast('Nothing to read — copy the orders in WhatsApp first'); return false; }
+    const code = /MONTERRA-CLIENTS:([A-Za-z0-9+/=_-]+)/.exec(text);
+    if (code) { addClientsFromCode(code[1]); return false; }
     const drafts = L.readOrders(text, D());
     let added = 0, skipped = 0;
     for (const d of drafts) {
